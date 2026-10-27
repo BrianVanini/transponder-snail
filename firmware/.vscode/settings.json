@@ -1,0 +1,5 @@
+{
+    "idf.currentSetup": "/Users/andylin/.espressif/v6.1/esp-idf",
+    "idf.port": "/dev/tty.usbserial-110",
+    "idf.flashType": "UART"
+}
