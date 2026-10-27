@@ -1,0 +1,4 @@
+firmware/build/
+firmware/managed_components/
+firmware/sdkconfig.old
+.DS_Store
