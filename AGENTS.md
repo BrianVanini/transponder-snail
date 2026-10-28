@@ -42,21 +42,31 @@ Also on hand: RexQualis electronics kit (breadboard, jumpers, resistors, power m
 - I2S pin choices on the ESP32 matter; check the mic/amp docs. Mic and amp can be on separate I2S peripherals.
 - DFPlayer: FAT16/FAT32 card, files named like `0001.mp3`, 1kΩ resistor between ESP32 TX and DFPlayer RX. Drives the base speaker directly (built-in amp).
 - MAX98357A output goes straight to the speaker — never to another amp or to ground.
-- Reed switch: read with internal pull-up. Rare-earth magnets may trigger from too far away; measure trigger distance before fixing shell wall thickness.
+- Reed switch: read with internal pull-up. Rare-earth magnets may trigger from too far away. A MagSafe charger was only a weak test magnet; measure reed trigger distance with a ~10 mm neodymium disc before fixing shell wall thickness.
 - **Range risk:** a concrete wall separates the two sides of the house. Test ESP-NOW through it early. Fixes in order: raise TX power → U.FL-antenna ESP32 boards → route over home WiFi instead.
 
 ## Repo layout
 
 - `firmware/` — ESP-IDF project (open this folder in VS Code). `main/main.c` is the entry point (`app_main`).
 - Board shows up on macOS as `/dev/cu.usbserial-*`; target chip is `esp32`.
+- `docs/breadboard-setup.md` — how to rebuild the current breadboard prototype (keep it updated as parts are added).
+
+## Boards
+
+- Snail A — `C8:85:41:2A:0B:98`
+- Snail B — `20:50:0D:E9:99:BC`
+
+Boards are labeled with tape. The MAC table (`SNAILS[]`) in `firmware/main/main.c` must match; a new snail needs a row added there.
 
 ## Firmware roadmap
 
-1. Toolchain check: build/flash/monitor hello world (`"Snail alive, count = N"`).
-2. GPIO: reed switch + PTT button.
+Step 6 (ESP-NOW) is being done before 3–5 because the mic/amp headers still need soldering.
+
+1. Toolchain check: build/flash/monitor hello world (`"Snail alive, count = N"`). ✅
+2. GPIO: reed switch + PTT button. ✅
 3. I2S mic capture (ICS-43434).
 4. I2S speaker output (MAX98357A).
-5. DFPlayer control over UART (ring, click).
+5. DFPlayer control over UART (ring, click). In progress: `dfplayer.c` driver, plays 0001.mp3 on PTT/RING.
 6. ESP-NOW between two boards (control messages, then audio).
 7. Full call state machine (idle / ringing / connected / hang-up).
 
