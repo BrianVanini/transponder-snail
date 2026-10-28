@@ -40,7 +40,7 @@ Also on hand: RexQualis electronics kit (breadboard, jumpers, resistors, power m
 
 - ICS-43434 is **3.3V only** and bottom-ported — the port hole faces the speaker's mouth.
 - I2S pin choices on the ESP32 matter; check the mic/amp docs. Mic and amp can be on separate I2S peripherals.
-- DFPlayer: FAT16/FAT32 card, files named like `0001.mp3`, 1kΩ resistor between ESP32 TX and DFPlayer RX. Drives the base speaker directly (built-in amp).
+- DFPlayer: FAT16/FAT32 card, files named like `0001.mp3`, 1kΩ resistor between ESP32 TX and DFPlayer RX. Drives the base speaker directly (built-in amp). `0x40 param 6` = track not found; macOS hidden `._` files on the card can cause it.
 - MAX98357A output goes straight to the speaker — never to another amp or to ground.
 - Reed switch: read with internal pull-up. Rare-earth magnets may trigger from too far away. A MagSafe charger was only a weak test magnet; measure reed trigger distance with a ~10 mm neodymium disc before fixing shell wall thickness.
 - **Range risk:** a concrete wall separates the two sides of the house. Test ESP-NOW through it early. Fixes in order: raise TX power → U.FL-antenna ESP32 boards → route over home WiFi instead.
@@ -66,7 +66,7 @@ Step 6 (ESP-NOW) is being done before 3–5 because the mic/amp headers still ne
 2. GPIO: reed switch + PTT button. ✅
 3. I2S mic capture (ICS-43434).
 4. I2S speaker output (MAX98357A).
-5. DFPlayer control over UART (ring, click). In progress: `dfplayer.c` driver, plays 0001.mp3 on PTT/RING.
+5. DFPlayer control over UART (ring, click). Playback verified on hardware (0001.mp3 via PTT, Snail A); real ring/click sound files still to add.
 6. ESP-NOW between two boards (control messages, then audio).
 7. Full call state machine (idle / ringing / connected / hang-up).
 

@@ -119,7 +119,7 @@ Every 2 seconds (shown here on A):
 ping from B, RSSI -45 dBm
   -> B: delivered
 ```
-If the other board is off, you'll see `-> B: FAILED`.
+If the other board is off, you'll see `-> B: FAILED`. These are just ESP-NOW pings to the other board failing because it's off, so ignore them during single-board tests. If it says `-> A: FAILED`, you're looking at board B (check the `I am Snail …` line).
 
 - **Press a button**: that board prints `Calling B...` (or `Calling A...`), and the other board prints `*** Incoming call from A! ***` (with RSSI).
 - **Move the magnet** near Snail A's reed switch and away again: A prints `Hook: down` / `Hook: lifted`.
@@ -133,12 +133,16 @@ If the other board is off, you'll see `-> B: FAILED`.
 | below about −80 dBm | weak |
 | about −90 dBm | packets start dropping |
 
-## 7. DFPlayer Mini + base speaker (Snail A)
+## 7. DFPlayer Mini + base speaker (Snail A) — tested, working
+
+**Status:** tested on Snail A. Pressing PTT plays `0001.mp3` through the base speaker.
 
 The DFPlayer Mini (DFR0299) plays MP3 files from a microSD card. Its built-in 3W amp drives the base speaker (Visaton K28WPC) directly, so no extra amp is needed. The firmware plays `/mp3/0001.mp3` when you press PTT and when a RING arrives.
 
 ### Placement
 The DFPlayer is a 16-pin module (8 pins per side). Put it **straddling the center gap**, like a chip, with the **microSD slot facing outward** so you can still insert the card. For example, use rows 30–37, with the left pins in column `e` and the right pins in column `f`.
+
+There are no female-to-female jumpers on hand, so the DFPlayer **stays in the breadboard** and every connection to it goes through its breadboard rows.
 
 Pin 1 (VCC) is marked on the board. Looking at the module with pin 1 at the top left:
 
@@ -155,38 +159,75 @@ Pin 1 (VCC) is marked on the board. Looking at the module with pin 1 at the top 
 
 **Check this against the silkscreen or the DFRobot wiki pinout before powering up.** If the module is flipped, VCC and GND end up in the wrong places.
 
+### Finding 5V on the ESP32
+On the DevKitC-32E the pin is labeled **`5V`** (not VIN). It's the **last pin on the same header as IO32/IO33**, right next to the USB connector. Labels may be printed on the back of the board.
+
+Header order, starting from the antenna end:
+```
+3V3, EN, VP, VN, 34, 35, 32, 33, 25, 26, 27, 14, 12, GND, 13, D2, D3, CMD, 5V
+                                                                         ^ USB end
+```
+Fallback: **3V3 also works** (the DFPlayer runs on 3.2–5V), just quieter.
+
 ### Wiring
-- **VCC** → ESP32 **5V** pin (labeled `5V` or `VIN`; it has power whenever USB is plugged in). Do **not** use 3V3.
+- **VCC** → ESP32 **5V** pin (it has power whenever USB is plugged in).
 - **GND** → blue **−** rail.
 - **RX** ← **1kΩ resistor** (brown-black-red) ← ESP32 `IO17`. Put the resistor between the DFPlayer RX row and an empty row, then run the IO17 wire to that empty row.
 - **TX** → ESP32 `IO16` (plain jumper).
-- **SPK_1** and **SPK_2** → the two speaker pads (polarity doesn't matter for this test). **Never connect a speaker wire to GND.**
-
-Speaker without soldering: use alligator clips, or strip a jumper end, wrap it tightly around each pad, and tape it down.
+- **SPK_1** and **SPK_2** → the two speaker tabs. **Never connect a speaker wire to GND.**
 
 ```
 ESP32 IO17 --[1kΩ]--> DFPlayer RX
 ESP32 IO16 <--------- DFPlayer TX
 ESP32 5V   ---------> DFPlayer VCC
 − rail     ---------- DFPlayer GND
-DFPlayer SPK_1 ---- speaker pad
-DFPlayer SPK_2 ---- speaker pad
+DFPlayer SPK_1 ---- speaker tab
+DFPlayer SPK_2 ---- speaker tab
 ```
 
-### microSD card
-- Format it as **FAT32** (FAT16 also works).
-- Make a folder named `mp3` at the root and put a file named `0001.mp3` in it.
+### How the speaker connection works
+The speaker is **passive** (a coil and a magnet). It gets no data. The DFPlayer decodes the MP3, and its built-in amp pushes current out **SPK_1 → through the speaker coil → back into SPK_2**. The breadboard row just extends the DFPlayer's pin, so a jumper in the same 5-hole group as SPK_1 is connected to SPK_1.
+
+**No-solder test:** put a male-to-male jumper in the SPK_1 row and another in the SPK_2 row. Press or tape each metal tip flat onto one speaker tab (the tabs are on the back and may be marked +/−; polarity doesn't matter for this test). **The two tips must not touch each other.** Alligator clips are better if you have them.
+
+### microSD card checklist
+- Exactly **`mp3/0001.mp3`** at the card root: 4 digits, folder named `mp3`.
+- Format is **FAT32** (or FAT16), **not exFAT**.
+- It's a real MP3, not a renamed `.m4a` or `.wav`.
+- macOS adds hidden `._*` files and `.Spotlight-V100` / `.fseventsd` folders that can confuse the DFPlayer. Clean them, then eject:
+  ```
+  dot_clean -m /Volumes/<CARD>
+  rm /Volumes/<CARD>/mp3/._*
+  ```
 - **Insert the card before powering up.** The DFPlayer reads it once at boot. The firmware waits 1.5 s for that before it sends any commands.
 
 ### Expected
 At boot you may see `DFPlayer: got 0x3F` (card online). Pressing PTT prints `DFPlayer: play 0001`, and 0001.mp3 plays from the speaker. Receiving a RING from B plays it too.
 
+Volume is set in firmware: `DFP_VOLUME` in `main.c` (0–30, default 20).
+
+### DFPlayer reply codes
+The log prints replies as `DFPlayer: got 0x.. (param ..)`.
+
+| Code | Param | Meaning |
+|---|---|---|
+| 0x3F | – | Card online / initialized (good) |
+| 0x40 | 1 | Busy / not ready yet |
+| 0x40 | 3 | Serial receive error |
+| 0x40 | 4 | Checksum error |
+| 0x40 | 5 | Track number out of range |
+| 0x40 | 6 | Track not found |
+| 0x40 | 7 | Insertion error |
+| 0x40 | 8 | SD card read failed |
+
+"Prints `play 0001` but silent" together with `0x40 param 6` means **the file wasn't found**, not a volume problem. Go through the card checklist above.
+
 ### Troubleshooting (no sound)
-- Card: folder is `mp3` and the file is `0001.mp3` (not `1.mp3`). The card is FAT32.
-- Speaker wires are firmly on SPK_1 and SPK_2.
+- Check the log for a `0x40` code (table above).
+- Speaker wires are firmly on SPK_1 and SPK_2, and the tips don't touch.
 - TX/RX are not swapped: ESP32 **IO17** goes to DFPlayer **RX** through the resistor.
-- VCC is on **5V**, not 3.3V.
-- Give it about 2 s after power-up. `DFPlayer: got 0x40` means the DFPlayer reported an error, usually a card problem.
+- VCC is on **5V** (3V3 works but is quieter).
+- Give it about 2 s after power-up.
 
 ## 8. Not wired yet
 
