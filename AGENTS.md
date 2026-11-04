@@ -17,7 +17,14 @@ A pair of One Piece "Den Den Mushi" snail phones that talk directly to each othe
 - Incoming transmission while top is down → play "puru puru" ring via DFPlayer on the base speaker.
 - Lift top → stop ring, play click, route voice audio. Set top down → hang up (optional hang-up sound).
 - Small ESP-NOW control messages for ring / answer / hang-up, separate from audio packets.
-- **Undecided:** what happens if the receiving snail's top is already lifted when a call arrives (play immediately vs. still ring).
+- If the receiving snail's top is already lifted when a call arrives, it **auto-answers** (`AUTO_ANSWER_WHEN_LIFTED` in `call.c`; set 0 to ring instead).
+
+Call flow (`firmware/main/call.c`, states IDLE / CALLING / RINGING / CONNECTED):
+- Lift top, press PTT → RING is broadcast to every snail in `SNAILS[]` (re-sent every 1 s, gives up after 30 s) → CALLING.
+- A snail with its top down rings (track 1, repeated) → RINGING; it stops after ~3 s with no RING.
+- Lifting the top answers (click, MSG_ANSWER) → CONNECTED. The caller connects to the first answer and sends HANGUP to everyone else, so other ringers stop.
+- Busy snails reply MSG_BUSY. If two snails call each other at once, the lower `SNAILS[]` index answers.
+- In CONNECTED, PTT sends TALK_START / TALK_STOP (no audio yet). Setting the top down sends HANGUP → IDLE on both sides.
 
 ## Parts (DigiKey, ordered and arrived)
 
@@ -40,7 +47,7 @@ Also on hand: RexQualis electronics kit (breadboard, jumpers, resistors, power m
 
 - ICS-43434 is **3.3V only** and bottom-ported — the port hole faces the speaker's mouth.
 - I2S pin choices on the ESP32 matter; check the mic/amp docs. Mic and amp can be on separate I2S peripherals.
-- DFPlayer: FAT16/FAT32 card, files named like `0001.mp3`, 1kΩ resistor between ESP32 TX and DFPlayer RX. Drives the base speaker directly (built-in amp). `0x40 param 6` = track not found; macOS hidden `._` files on the card can cause it.
+- DFPlayer: FAT16/FAT32 card, files named like `0001.mp3`, 1kΩ resistor between ESP32 TX and DFPlayer RX. Drives the base speaker directly (built-in amp). Tracks: `RING_TRACK` = `mp3/0001.mp3`, `CLICK_TRACK` = `mp3/0002.mp3`. `0x40 param 6` = track not found; macOS hidden `._` files on the card can cause it.
 - MAX98357A output goes straight to the speaker — never to another amp or to ground.
 - Reed switch: read with internal pull-up. Rare-earth magnets may trigger from too far away. A MagSafe charger was only a weak test magnet; measure reed trigger distance with a ~10 mm neodymium disc before fixing shell wall thickness.
 - **Range risk:** a concrete wall separates the two sides of the house. Test ESP-NOW through it early. Fixes in order: raise TX power → U.FL-antenna ESP32 boards → route over home WiFi instead.
@@ -49,6 +56,8 @@ Also on hand: RexQualis electronics kit (breadboard, jumpers, resistors, power m
 
 - `firmware/` — ESP-IDF project (open this folder in VS Code). `main/main.c` is the entry point (`app_main`).
 - Board shows up on macOS as `/dev/cu.usbserial-*`; target chip is `esp32`.
+- `firmware/main/call.c` — call state machine; `main.c` is wiring (inputs, radio, DFPlayer).
+- `docs/testing-call-state-machine.md` — two-board test plan for the call flow.
 - `docs/breadboard-setup.md` — how to rebuild the current breadboard prototype (keep it updated as parts are added).
 
 ## Boards
@@ -67,8 +76,8 @@ Step 6 (ESP-NOW) is being done before 3–5 because the mic/amp headers still ne
 3. I2S mic capture (ICS-43434).
 4. I2S speaker output (MAX98357A).
 5. DFPlayer control over UART (ring, click). Playback verified on hardware (0001.mp3 via PTT, Snail A); real ring/click sound files still to add.
-6. ESP-NOW between two boards (control messages, then audio).
-7. Full call state machine (idle / ringing / connected / hang-up).
+6. ESP-NOW between two boards (control messages, then audio). Control messages done in code (RING / ANSWER / HANGUP / BUSY / TALK_START / TALK_STOP); audio still to do.
+7. Full call state machine (idle / calling / ringing / connected / hang-up). Implemented in `call.c`, awaiting two-board hardware test (`docs/testing-call-state-machine.md`).
 
 Test each subsystem on a breadboard before anything goes in a shell.
 
