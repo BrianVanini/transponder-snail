@@ -120,5 +120,6 @@ With a third snail (add its row to `SNAILS[]`): while A and B are connected, C c
 - **The ring plays once and stops on A:** it should replay when the DFPlayer reports the track finished (`DFPlayer: got 0x3D`). If no `0x3D` ever arrives, check the DFPlayer TX → IO16 wire. Until the first `0x3D` arrives, the fallback replays every 8 s anyway.
 - **The ring gets cut off:** with a DFPlayer the ring loops at its natural length. The timed fallback (8 s, `RING_REPLAY_MS` in `call.c`) only applies until the DFPlayer reports its first finished track, or on boards without a DFPlayer. So only the very first ring can be cut off, and only if the file is longer than 8 s. Shorten it, or raise `RING_REPLAY_MS`.
 - **No click on answer:** `mp3/0002.mp3` is missing. Look for `DFPlayer: got 0x40 (param 6)`.
+- **Call connects then drops right away:** the hook flickered (jumper half-out touching, or magnet still near the reed switch), so the board saw lifted → down and hung up. Look for `Hook: down` just before `CONNECTED -> IDLE (hung up)`. Pull the jumper fully out and keep the magnet away.
 - **`UNKNOWN SNAIL`:** this board's MAC isn't in `SNAILS[]` in `main.c`.
 - **Stuck in CONNECTED after the other board was unplugged:** expected for now (there's no keep-alive). Put the top down to hang up.

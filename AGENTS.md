@@ -77,7 +77,7 @@ Step 6 (ESP-NOW) is being done before 3–5 because the mic/amp headers still ne
 4. I2S speaker output (MAX98357A).
 5. DFPlayer control over UART (ring, click). Playback verified on hardware (0001.mp3 via PTT, Snail A); real ring/click sound files still to add.
 6. ESP-NOW between two boards (control messages, then audio). Link verified on hardware: RING + pings work in both directions (Snail A ↔ B) through several interior walls. Control messages done (RING / ANSWER / HANGUP / BUSY / TALK_START / TALK_STOP); audio still to do.
-7. Full call state machine (idle / calling / ringing / connected / hang-up). Implemented in `call.c`, awaiting two-board hardware test (`docs/testing-call-state-machine.md`).
+7. Full call state machine (idle / calling / ringing / connected / hang-up). Implemented in `call.c` and verified on hardware with two boards (ring, answer, talk, hang up, timeout, auto-answer, simultaneous call), using jumper wires on IO33 as the hook.
 
 Test each subsystem on a breadboard before anything goes in a shell.
 
