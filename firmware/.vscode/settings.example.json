@@ -1,0 +1,6 @@
+{
+    "//": "Copy to settings.json (git-ignored). Or just pick port/target with the ESP-IDF status bar buttons; the extension writes settings.json for you.",
+    "idf.currentSetup": "<path to esp-idf, e.g. /Users/you/.espressif/v6.1/esp-idf or C:\\Users\\you\\.espressif\\v6.1\\esp-idf>",
+    "idf.port": "<e.g. /dev/cu.usbserial-110 on Mac, COM5 on Windows>",
+    "idf.flashType": "UART"
+}

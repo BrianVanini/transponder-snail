@@ -27,7 +27,7 @@
 #define DFP_UART      UART_NUM_2
 #define DFP_TX_GPIO   GPIO_NUM_17   // -> 1k resistor -> DFPlayer RX
 #define DFP_RX_GPIO   GPIO_NUM_16   // <- DFPlayer TX
-#define DFP_VOLUME    20            // 0-30
+#define DFP_VOLUME    30            // 0-30
 
 // Known snails (WiFi STA MACs). To add a snail, add a row here.
 typedef struct {
