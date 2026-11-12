@@ -13,21 +13,21 @@
 #include "esp_now.h"
 #include "nvs_flash.h"
 #include "dfplayer.h"
+#include "call.h"
 
-// ESP-NOW link test: PTT sends RING to every other snail, pings every 2 s.
-// DFPlayer plays /mp3/0001.mp3 (the ring) on PTT press and on incoming RING.
+// Wiring: inputs, ESP-NOW radio and DFPlayer feed events into the call state machine (call.c).
 #define PTT_GPIO      GPIO_NUM_32
 #define HOOK_GPIO     GPIO_NUM_33
 #define POLL_MS       10
 #define DEBOUNCE_MS   30
-#define PING_MS       2000
+#define DEBUG_PINGS   1             // 1 = ping every peer and print RSSI (range test)
+#define PING_MS       5000
 #define WIFI_CHANNEL  1
 #define NAME_LEN      8
 #define DFP_UART      UART_NUM_2
 #define DFP_TX_GPIO   GPIO_NUM_17   // -> 1k resistor -> DFPlayer RX
 #define DFP_RX_GPIO   GPIO_NUM_16   // <- DFPlayer TX
 #define DFP_VOLUME    30            // 0-30
-#define RING_TRACK    1
 
 // Known snails (WiFi STA MACs). To add a snail, add a row here.
 typedef struct {
@@ -43,14 +43,7 @@ static const snail_t SNAILS[] = {
 
 static int self_idx = -1;
 
-// Over-the-air message. Keep it small and fixed-size.
-typedef enum {
-    MSG_RING = 1,
-    MSG_PING,
-    MSG_ANSWER,   // reserved for later
-    MSG_HANGUP,   // reserved for later
-} msg_type_t;
-
+// Over-the-air message (types in call.h). Keep it small and fixed-size.
 typedef struct __attribute__((packed)) {
     uint8_t type;            // msg_type_t
     char name[NAME_LEN];     // sender name, NUL-terminated
@@ -59,19 +52,20 @@ typedef struct __attribute__((packed)) {
 // Received message handed from the WiFi task to app_main via a queue.
 typedef struct {
     uint8_t type;
+    int from;                // SNAILS[] index, -1 if not in the table
     int rssi;
     char name[NAME_LEN];
 } rx_event_t;
 
 static QueueHandle_t rx_queue;
 
-// Name for a MAC from the table, or NULL if unknown.
-static const char *snail_name(const uint8_t *mac)
+// Table index for a MAC, or -1 if unknown.
+static int snail_index(const uint8_t *mac)
 {
     for (int i = 0; i < NUM_SNAILS; i++) {
-        if (memcmp(SNAILS[i].mac, mac, 6) == 0) return SNAILS[i].name;
+        if (memcmp(SNAILS[i].mac, mac, 6) == 0) return i;
     }
-    return NULL;
+    return -1;
 }
 
 // Runs in the WiFi task: copy what we need and get out.
@@ -79,10 +73,9 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
 {
     if (len < (int)sizeof(snail_msg_t)) return;
     const snail_msg_t *msg = (const snail_msg_t *)data;
-    rx_event_t ev = { .type = msg->type, .rssi = info->rx_ctrl->rssi };
-    const char *name = snail_name(info->src_addr);
-    if (name) {
-        strncpy(ev.name, name, NAME_LEN - 1);
+    rx_event_t ev = { .type = msg->type, .from = snail_index(info->src_addr), .rssi = info->rx_ctrl->rssi };
+    if (ev.from >= 0) {
+        strncpy(ev.name, SNAILS[ev.from].name, NAME_LEN - 1);
     } else {
         memcpy(ev.name, msg->name, NAME_LEN);
         ev.name[NAME_LEN - 1] = '\0';
@@ -92,20 +85,18 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
 
 static void on_send(const esp_now_send_info_t *info, esp_now_send_status_t status)
 {
-    const char *name = snail_name(info->des_addr);
-    printf("  -> %s: %s\n", name ? name : "?",
+    if (status == ESP_NOW_SEND_SUCCESS && !DEBUG_PINGS) return;
+    int i = snail_index(info->des_addr);
+    printf("  -> %s: %s\n", i >= 0 ? SNAILS[i].name : "?",
            status == ESP_NOW_SEND_SUCCESS ? "delivered" : "FAILED");
 }
 
-static void send_to_peers(msg_type_t type)
+static void send_msg(int peer, msg_type_t type)
 {
     snail_msg_t msg = { .type = type };
     strncpy(msg.name, SNAILS[self_idx].name, NAME_LEN - 1);
-    for (int i = 0; i < NUM_SNAILS; i++) {
-        if (i == self_idx) continue;
-        esp_err_t err = esp_now_send(SNAILS[i].mac, (const uint8_t *)&msg, sizeof(msg));
-        if (err != ESP_OK) printf("esp_now_send to %s: %s\n", SNAILS[i].name, esp_err_to_name(err));
-    }
+    esp_err_t err = esp_now_send(SNAILS[peer].mac, (const uint8_t *)&msg, sizeof(msg));
+    if (err != ESP_OK) printf("esp_now_send to %s: %s\n", SNAILS[peer].name, esp_err_to_name(err));
 }
 
 static void radio_init(void)
@@ -181,23 +172,27 @@ static bool debounce_update(debounced_t *d)
 // Pressed button / closed reed switch pulls the pin LOW.
 static void print_hook(int level) { printf("Hook: %s\n", level ? "lifted" : "down"); }
 
-static void play_ring(void)
+// Callbacks for the call state machine.
+static void play_track(uint16_t n)
 {
-    printf("DFPlayer: play %04d\n", RING_TRACK);
-    dfplayer_play_mp3(RING_TRACK);
+    printf("DFPlayer: play %04d\n", n);
+    dfplayer_play_mp3(n);
 }
 
-static void print_peers(void)
+static void stop_track(void)
 {
-    printf("Calling ");
-    bool first = true;
-    for (int i = 0; i < NUM_SNAILS; i++) {
-        if (i == self_idx) continue;
-        printf("%s%s", first ? "" : ", ", SNAILS[i].name);
-        first = false;
-    }
-    printf("...\n");
+    printf("DFPlayer: stop\n");
+    dfplayer_stop();
 }
+
+static const char *peer_name(int i) { return SNAILS[i].name; }
+
+static const call_io_t CALL_IO = {
+    .send = send_msg,
+    .play = play_track,
+    .stop = stop_track,
+    .name = peer_name,
+};
 
 void app_main(void)
 {
@@ -238,33 +233,37 @@ void app_main(void)
     debounce_init(&ptt, PTT_GPIO);
     debounce_init(&hook, HOOK_GPIO);
     print_hook(hook.stable);
+    call_init(&CALL_IO, self_idx, NUM_SNAILS, hook.stable == 1);
 
     int ping_ms = 0;
     while (1) {
-        if (debounce_update(&ptt) && ptt.stable == 0) {  // falling edge = press
-            print_peers();
-            send_to_peers(MSG_RING);
-            play_ring();
+        if (debounce_update(&ptt)) call_ptt(ptt.stable == 0);  // LOW = pressed
+        if (debounce_update(&hook)) {
+            print_hook(hook.stable);
+            call_hook(hook.stable == 1);                       // HIGH = lifted
         }
-        if (debounce_update(&hook)) print_hook(hook.stable);
 
         ping_ms += POLL_MS;
-        if (ping_ms >= PING_MS) {
+        if (DEBUG_PINGS && ping_ms >= PING_MS) {
             ping_ms = 0;
-            send_to_peers(MSG_PING);
+            for (int i = 0; i < NUM_SNAILS; i++) {
+                if (i != self_idx) send_msg(i, MSG_PING);
+            }
         }
 
         rx_event_t ev;
         while (xQueueReceive(rx_queue, &ev, 0) == pdTRUE) {
-            if (ev.type == MSG_RING) {
-                printf("*** Incoming call from %s! (RSSI %d dBm) ***\n", ev.name, ev.rssi);
-                play_ring();
-            } else if (ev.type == MSG_PING) {
-                printf("ping from %s, RSSI %d dBm\n", ev.name, ev.rssi);
+            if (ev.type == MSG_PING) {
+                if (DEBUG_PINGS) printf("ping from %s, RSSI %d dBm\n", ev.name, ev.rssi);
+            } else if (ev.from < 0) {
+                printf("Ignoring message %u from unknown snail \"%s\"\n", ev.type, ev.name);
+            } else {
+                call_msg(ev.from, (msg_type_t)ev.type);
             }
         }
 
-        dfplayer_poll();
+        if (dfplayer_poll()) call_track_done();
+        call_tick(POLL_MS);
         vTaskDelay(pdMS_TO_TICKS(POLL_MS));
     }
 }

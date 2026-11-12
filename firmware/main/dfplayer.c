@@ -10,6 +10,7 @@
 #define CMD_VOLUME     0x06
 #define CMD_PLAY_MP3   0x12
 #define CMD_STOP       0x16
+#define RPL_TF_DONE    0x3D   // reply: track on the microSD card finished
 
 static uart_port_t dfp_port;
 
@@ -47,8 +48,9 @@ void dfplayer_set_volume(uint8_t vol) { send_cmd(CMD_VOLUME, vol > 30 ? 30 : vol
 void dfplayer_play_mp3(uint16_t n) { send_cmd(CMD_PLAY_MP3, n); }
 void dfplayer_stop(void) { send_cmd(CMD_STOP, 0); }
 
-void dfplayer_poll(void)
+bool dfplayer_poll(void)
 {
+    bool done = false;
     static uint8_t buf[DFP_FRAME_LEN];
     static int pos = 0;
     uint8_t b;
@@ -58,8 +60,10 @@ void dfplayer_poll(void)
         if (pos == DFP_FRAME_LEN) {
             if (buf[9] == 0xEF) {
                 printf("DFPlayer: got 0x%02X (param %u)\n", buf[3], (buf[5] << 8) | buf[6]);
+                if (buf[3] == RPL_TF_DONE) done = true;
             }
             pos = 0;
         }
     }
+    return done;
 }

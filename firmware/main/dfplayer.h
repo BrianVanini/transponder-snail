@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "driver/gpio.h"
 #include "driver/uart.h"
@@ -12,4 +13,5 @@ void dfplayer_play_mp3(uint16_t n);     // plays /mp3/000n.mp3
 void dfplayer_stop(void);
 
 // Log any frames the DFPlayer sent back (e.g. 0x3F card online, 0x40 error). Never blocks.
-void dfplayer_poll(void);
+// Returns true if a track finished playing (0x3D) since the last call.
+bool dfplayer_poll(void);
