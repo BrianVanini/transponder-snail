@@ -253,7 +253,7 @@ The log prints replies as `DFPlayer: got 0x.. (param ..)`.
 
 ## 8. Mic and amp (after headers are soldered)
 
-**Status:** pins chosen, not wired or tested yet. The firmware doesn't drive the mic or amp yet. That comes in roadmap steps 3 and 4.
+**Status:** pins chosen, not wired or tested yet. The firmware has test modes for both (`AUDIO_TEST` in `main.c`). See [testing-mic-and-amp.md](testing-mic-and-amp.md) for how to run them and what they should print.
 
 **Solder the header pins first.** Both breakouts come with loose header strips. Wires pressed against bare pads won't work reliably. Solder the short side of the header into the board, long side down, so the breakout can sit in the breadboard.
 
@@ -338,6 +338,9 @@ ESP32 IO35 <--------- Mic DOUT           ESP32 IO21 ---------> Amp DIN
                                          Amp + ---- speaker tab
                                          Amp − ---- speaker tab   (never GND)
 ```
+
+### Testing
+Set `AUDIO_TEST` in `firmware/main/main.c` to 1 (beep), 2 (mic meter) or 3 (loopback) and flash. Full steps and troubleshooting: [testing-mic-and-amp.md](testing-mic-and-amp.md). If the headers are not soldered yet (only pressed in), expect on/off contact: run the mic meter and press the breakout down while watching the numbers.
 
 ### Later: the coiled cord
 In the finished snail, the mic's 5 wires (`3V`, `GND`, `BCLK`, `LRCL`, `DOUT`) and the 2 speaker wires go up the coiled cord to the top piece. The amp stays in the base. Pair each I2S signal with a GND wire, or twist BCLK with GND. The clock is the line most likely to pick up noise over 1–2 ft. Test the mic over the real cord before closing up the shell.

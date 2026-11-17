@@ -72,6 +72,8 @@ Also on hand: RexQualis electronics kit (breadboard, jumpers, resistors, power m
 - Board shows up on macOS as `/dev/cu.usbserial-*`; target chip is `esp32`.
 - `firmware/main/call.c` — call state machine; `main.c` is wiring (inputs, radio, DFPlayer).
 - `docs/testing-call-state-machine.md` — two-board test plan for the call flow.
+- `firmware/main/audio.c` — I2S mic (I2S0) and amp (I2S1) drivers. Test modes: `AUDIO_TEST` in `main.c`.
+- `docs/testing-mic-and-amp.md` — how to run the mic/amp test modes (beep, mic meter, loopback).
 - `docs/breadboard-setup.md` — how to rebuild the current breadboard prototype (keep it updated as parts are added).
 
 ## Boards
@@ -87,8 +89,8 @@ Step 6 (ESP-NOW) is being done before 3–5 because the mic/amp headers still ne
 
 1. Toolchain check: build/flash/monitor hello world (`"Snail alive, count = N"`). ✅
 2. GPIO: reed switch + PTT button. ✅
-3. I2S mic capture (ICS-43434).
-4. I2S speaker output (MAX98357A).
+3. I2S mic capture (ICS-43434). Driver in `audio.c`; test modes 2 (mic meter) and 3 (loopback) via `AUDIO_TEST` in `main.c`. Awaiting hardware test.
+4. I2S speaker output (MAX98357A). Driver in `audio.c`; test mode 1 (beep) via `AUDIO_TEST` in `main.c`. Awaiting hardware test.
 5. DFPlayer control over UART (ring, click). Playback verified on hardware (0001.mp3 via PTT, Snail A); real ring/click sound files still to add.
 6. ESP-NOW between two boards (control messages, then audio). Link verified on hardware: RING + pings work in both directions (Snail A ↔ B) through several interior walls. Control messages done (RING / ANSWER / HANGUP / BUSY / TALK_START / TALK_STOP); audio still to do.
 7. Full call state machine (idle / calling / ringing / connected / hang-up). Implemented in `call.c` and verified on hardware with two boards (ring, answer, talk, hang up, timeout, auto-answer, simultaneous call), using jumper wires on IO33 as the hook.

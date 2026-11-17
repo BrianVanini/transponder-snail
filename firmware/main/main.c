@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -14,6 +15,7 @@
 #include "nvs_flash.h"
 #include "dfplayer.h"
 #include "call.h"
+#include "audio.h"
 
 // Wiring: inputs, ESP-NOW radio and DFPlayer feed events into the call state machine (call.c).
 #define PTT_GPIO      GPIO_NUM_32
@@ -28,6 +30,17 @@
 #define DFP_TX_GPIO   GPIO_NUM_17   // -> 1k resistor -> DFPlayer RX
 #define DFP_RX_GPIO   GPIO_NUM_16   // <- DFPlayer TX
 #define DFP_VOLUME    30            // 0-30
+
+// Hardware test modes for the I2S mic and amp (docs/testing-mic-and-amp.md).
+// When not 0, the board runs ONLY the test below: no radio, no call logic, no DFPlayer.
+//   0 = normal snail firmware (default).
+//   1 = BEEP: hold PTT to play a 1 kHz tone through the amp + top speaker.
+//   2 = MIC METER: prints the mic level 5 times a second, plus wiring hints.
+//   3 = LOOPBACK: hold PTT to hear the mic live through the speaker.
+//       Expect a squeal (feedback) if the speaker points at the mic or the volume is high.
+//       Keep them apart; set the volume with TEST_VOLUME.
+#define AUDIO_TEST    0
+#define TEST_VOLUME   AUDIO_DEFAULT_VOLUME   // amp volume in the test modes, 0-100 (%)
 
 // Known snails (WiFi STA MACs). To add a snail, add a row here.
 typedef struct {
@@ -171,6 +184,20 @@ static bool debounce_update(debounced_t *d)
     return false;
 }
 
+// Inputs with internal pull-ups, so no external resistors are needed.
+static void inputs_init(void)
+{
+    gpio_config_t cfg = {
+        .pin_bit_mask = (1ULL << PTT_GPIO) | (1ULL << HOOK_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&cfg);
+    vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_MS));  // let pull-ups settle
+}
+
 // Pressed button / closed reed switch pulls the pin LOW.
 static void print_hook(int level) { printf("Hook: %s\n", level ? "lifted" : "down"); }
 
@@ -196,8 +223,130 @@ static const call_io_t CALL_IO = {
     .name = peer_name,
 };
 
+// ---------------------------------------------------------------------------
+// AUDIO_TEST modes (see the #define at the top). Runs forever, never returns.
+
+#define TEST_BLOCK    (AUDIO_SAMPLE_RATE / 100)   // 10 ms of samples = one POLL_MS step
+#define METER_BLOCKS  20                          // 20 x 10 ms = print every 200 ms
+
+static void print_pins(void)
+{
+    printf("Audio test mode %d\n", AUDIO_TEST);
+    printf("  Mic (I2S0): BCLK=IO%d  WS/LRCL=IO%d  DOUT->IO%d   3V->3V3 (NOT 5V), SEL unconnected\n",
+           MIC_BCLK_GPIO, MIC_WS_GPIO, MIC_DOUT_GPIO);
+    printf("  Amp (I2S1): BCLK=IO%d  LRC=IO%d  DIN=IO%d   Vin->5V, GAIN/SD unconnected\n",
+           AMP_BCLK_GPIO, AMP_LRC_GPIO, AMP_DIN_GPIO);
+    printf("  PTT: IO%d   Sample rate %d Hz   Volume %d%%\n", PTT_GPIO, AUDIO_SAMPLE_RATE, TEST_VOLUME);
+}
+
+// Mode 1: 1 kHz sine while PTT is held. 16000 / 1000 = 16 samples per wave.
+static void test_beep(debounced_t *ptt)
+{
+    int16_t wave[16];
+    for (int i = 0; i < 16; i++) {
+        wave[i] = (int16_t)(16000 * sinf(2.0f * (float)M_PI * i / 16));   // about half of full scale
+    }
+    int16_t block[TEST_BLOCK];
+    for (int i = 0; i < TEST_BLOCK; i++) block[i] = wave[i % 16];   // 160 is a multiple of 16
+
+    printf("Hold PTT to beep.\n");
+    while (1) {
+        if (debounce_update(ptt)) printf(ptt->stable == 0 ? "Beep on\n" : "Beep off\n");
+        if (ptt->stable == 0) {
+            audio_amp_write(block, TEST_BLOCK);    // takes ~10 ms, so no extra delay
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(POLL_MS));    // amp falls silent on its own
+        }
+    }
+}
+
+// Mode 2: print peak/RMS every 200 ms, plus a bar and wiring hints.
+static void test_mic_meter(void)
+{
+    static int16_t block[TEST_BLOCK];
+    printf("Mic meter: talk or tap near the mic's hole (bottom of the board).\n");
+    while (1) {
+        int peak = 0, bad = 0;
+        int64_t sum_sq = 0;
+        size_t total = 0;
+        mic_status_t last_bad = MIC_OK;
+        for (int b = 0; b < METER_BLOCKS; b++) {
+            size_t n = audio_mic_read(block, TEST_BLOCK);
+            mic_status_t st = audio_mic_status();
+            if (st != MIC_OK) { bad++; last_bad = st; }
+            for (size_t i = 0; i < n; i++) {
+                int v = block[i] < 0 ? -block[i] : block[i];
+                if (v > peak) peak = v;
+                sum_sq += (int64_t)block[i] * block[i];
+            }
+            total += n;
+        }
+        int rms = total ? (int)sqrtf((float)sum_sq / total) : 0;
+
+        // Bar: one '#' per doubling of the peak (log scale), 0..15 marks.
+        char bar[16];
+        int marks = 0;
+        for (int v = peak; v > 0; v >>= 1) marks++;
+        if (marks > 15) marks = 15;
+        for (int i = 0; i < 15; i++) bar[i] = i < marks ? '#' : ' ';
+        bar[15] = '\0';
+        printf("mic peak %5d rms %5d |%s|", peak, rms, bar);
+
+        if (bad == METER_BLOCKS) {
+            if (last_bad == MIC_NO_DATA)    printf("  mic: no data (check DOUT->IO35, 3V, GND, BCLK, WS)");
+            if (last_bad == MIC_STUCK)      printf("  mic: stuck line (DOUT stuck high/low? check DOUT->IO35, GND)");
+            if (last_bad == MIC_WRONG_SLOT) printf("  mic: data in the other slot (set MIC_SLOT in audio.c, or tie SEL to GND)");
+        } else if (bad > 0) {
+            printf("  dropouts %d/%d (loose contact? press the mic board down)", bad, METER_BLOCKS);
+        }
+        printf("\n");
+    }
+}
+
+// Mode 3: mic -> amp while PTT is held. Mic reads and amp writes both run at the
+// sample rate, so each loop pass takes ~10 ms.
+static void test_loopback(debounced_t *ptt)
+{
+    static int16_t block[TEST_BLOCK];
+    printf("Hold PTT to hear the mic. Squeal = feedback: move the speaker away, lower TEST_VOLUME.\n");
+    while (1) {
+        if (debounce_update(ptt)) printf(ptt->stable == 0 ? "Loopback on\n" : "Loopback off\n");
+        if (ptt->stable == 0) {
+            size_t n = audio_mic_read(block, TEST_BLOCK);
+            audio_amp_write(block, n);
+            if (n == 0) vTaskDelay(pdMS_TO_TICKS(POLL_MS));   // mic missing: don't spin
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(POLL_MS));
+        }
+    }
+}
+
+static void audio_test(void)
+{
+    print_pins();
+    inputs_init();
+    debounced_t ptt;
+    debounce_init(&ptt, PTT_GPIO);
+
+    if (AUDIO_TEST == 1 || AUDIO_TEST == 3) {
+        audio_amp_init();
+        audio_amp_set_volume(TEST_VOLUME);
+    }
+    if (AUDIO_TEST == 2 || AUDIO_TEST == 3) audio_mic_init();
+
+    if (AUDIO_TEST == 1) test_beep(&ptt);
+    if (AUDIO_TEST == 2) test_mic_meter();
+    if (AUDIO_TEST == 3) test_loopback(&ptt);
+    while (1) {
+        printf("Unknown AUDIO_TEST %d (use 0-3)\n", AUDIO_TEST);
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
 void app_main(void)
 {
+    if (AUDIO_TEST != 0) audio_test();   // never returns
+
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     printf("Snail MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
@@ -220,16 +369,7 @@ void app_main(void)
     dfplayer_init(DFP_UART, DFP_TX_GPIO, DFP_RX_GPIO);
     dfplayer_set_volume(DFP_VOLUME);
 
-    // Inputs with internal pull-ups, so no external resistors are needed.
-    gpio_config_t cfg = {
-        .pin_bit_mask = (1ULL << PTT_GPIO) | (1ULL << HOOK_GPIO),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&cfg);
-    vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_MS));  // let pull-ups settle
+    inputs_init();
 
     debounced_t ptt, hook;
     debounce_init(&ptt, PTT_GPIO);
