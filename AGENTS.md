@@ -10,6 +10,18 @@ A pair of One Piece "Den Den Mushi" snail phones that talk directly to each othe
 - **Top piece** (lifts off like a handset): ICS-43434 I2S mic, top speaker, magnet that trips the reed switch.
 - **Base-to-top cable:** ~1–2 ft, 8-conductor coiled cord. 7 wires used: mic VCC, GND, BCLK, WS, DOUT + speaker +/− (amp stays in the base). Use twisted pairs for I2S lines.
 
+**Pin map** (same on every snail; I2S pins chosen, not yet wired):
+
+| GPIO | Use |
+|---|---|
+| IO32 | PTT button (to GND, internal pull-up) |
+| IO33 | Hook reed switch (to GND, internal pull-up) |
+| IO17 / IO16 | UART2 TX (→ 1kΩ → DFPlayer RX) / RX (← DFPlayer TX) |
+| IO26 / IO25 / IO35 | Mic I2S0 BCLK / WS / DOUT (IO35 input-only) |
+| IO18 / IO19 / IO21 | Amp I2S1 BCLK / LRC / DIN |
+| 5V | DFPlayer VCC, amp Vin |
+| 3V3 | Mic 3V (never 5V) |
+
 ## Behavior
 
 - Top lifted → reed switch reports off-hook. Hold PTT to talk (half-duplex).
@@ -47,7 +59,8 @@ Also on hand: RexQualis electronics kit (breadboard, jumpers, resistors, power m
 ## Hardware gotchas
 
 - ICS-43434 is **3.3V only** and bottom-ported — the port hole faces the speaker's mouth.
-- I2S pin choices on the ESP32 matter; check the mic/amp docs. Mic and amp can be on separate I2S peripherals.
+- I2S: mic on I2S0, amp on I2S1 (independent, half-duplex anyway). Strapping pins (0/2/5/12/15), flash pins (6–11) and IO14 (boot PWM) are avoided. Mic 3V → 3V3 only; SEL unconnected = left channel. Amp Vin on 5V (louder); GAIN and SD unconnected (9 dB, (L+R)/2 mono). Wiring: `docs/breadboard-setup.md` section 8.
+- ICS-43434 driver: 64 BCLK per WS frame (32-bit slots, stereo), 24-bit data in left slot. Valid fs ≈ 6.25–18.75 kHz (low-power) or 23–51.6 kHz; use 16 kHz, avoid 18.75–23 kHz.
 - DFPlayer: FAT16/FAT32 card, files named like `0001.mp3`, 1kΩ resistor between ESP32 TX and DFPlayer RX. Drives the base speaker directly (built-in amp). Tracks: `RING_TRACK` = `mp3/0001.mp3`, `CLICK_TRACK` = `mp3/0002.mp3`. `0x40 param 6` = track not found; macOS hidden `._` files on the card can cause it.
 - MAX98357A output goes straight to the speaker — never to another amp or to ground.
 - Reed switch: read with internal pull-up. Rare-earth magnets may trigger from too far away. A MagSafe charger was only a weak test magnet; measure reed trigger distance with a ~10 mm neodymium disc before fixing shell wall thickness.

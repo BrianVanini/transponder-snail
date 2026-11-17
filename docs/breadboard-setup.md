@@ -2,6 +2,28 @@
 
 How to rebuild the breadboard prototype as it stands now. Current firmware is the **ESP-NOW link test** (`firmware/main/main.c`) plus a DFPlayer ring test. Keep this file updated as parts are added.
 
+## Full pin map (every snail, quick reference)
+
+Same on every snail. "Planned" pins are chosen but not wired or used by the firmware yet (see section 8).
+
+| ESP32 pin | Header (DevKitC) | Goes to | Status |
+|---|---|---|---|
+| IO32 | left (J2) | PTT button → − rail | wired |
+| IO33 | left (J2) | Reed switch (hook) → − rail | wired |
+| IO17 | right (J3) | 1kΩ → DFPlayer RX | wired |
+| IO16 | right (J3) | DFPlayer TX | wired |
+| IO26 | left (J2) | Mic BCLK | planned |
+| IO25 | left (J2) | Mic LRCL (WS) | planned |
+| IO35 | left (J2) | Mic DOUT (input-only pin, mic → ESP32) | planned |
+| IO18 | right (J3) | Amp BCLK | planned |
+| IO19 | right (J3) | Amp LRC | planned |
+| IO21 | right (J3) | Amp DIN | planned |
+| 5V | left (J2), USB end | DFPlayer VCC, amp Vin | DFPlayer wired, amp planned |
+| 3V3 | left (J2), antenna end | Mic 3V **(3V3 only!)** | planned |
+| GND | either header | blue − rail | wired |
+
+**Don't use:** IO0, IO2, IO5, IO12, IO15 (strapping pins: they decide how the chip boots), IO6–IO11 (`D0–D3`, `CMD`, `CLK`: wired to the flash chip inside the module), TX/RX (the USB serial console), IO14 (it flickers during boot). Free spare pins: IO4, IO13, IO22, IO23, IO27, IO34 (input-only).
+
 ## 1. Safety and breadboard basics
 
 - **Unplug USB before you wire anything.** Plug it back in only after you've checked the wiring.
@@ -229,8 +251,105 @@ The log prints replies as `DFPlayer: got 0x.. (param ..)`.
 - VCC is on **5V** (3V3 works but is quieter).
 - Give it about 2 s after power-up.
 
-## 8. Not wired yet
+## 8. Mic and amp (after headers are soldered)
 
-- ICS-43434 mic and MAX98357A amp (their header pins need to be soldered first)
-- Top speaker
+**Status:** pins chosen, not wired or tested yet. The firmware doesn't drive the mic or amp yet. That comes in roadmap steps 3 and 4.
+
+**Solder the header pins first.** Both breakouts come with loose header strips. Wires pressed against bare pads won't work reliably. Solder the short side of the header into the board, long side down, so the breakout can sit in the breadboard.
+
+### What I2S is (in one paragraph)
+I2S is a 3-wire way to send sound as numbers:
+- **BCLK** (bit clock) ticks once per bit.
+- **WS / LRC / LRCL** (word select, also called left/right clock) says "this is the left sample" or "this is the right sample".
+- **Data** carries the bits.
+
+The ESP32 is the "boss" on both links: it makes BCLK and WS. The mic sends data **into** the ESP32 (`DOUT` → ESP32). The ESP32 sends data **out** to the amp (ESP32 → `DIN`).
+
+### Why the mic and amp use separate pins
+The ESP32 has **two** I2S units, `I2S0` and `I2S1`. The mic gets `I2S0` and the amp gets `I2S1`:
+- They can be started, stopped and set to different formats independently. The mic needs 32-bit slots, while the amp is happy with 16-bit.
+- The mic's wires go up the coiled cord to the top piece, but the amp stays in the base. Separate pins keep those two groups apart.
+- Talking is half-duplex (push-to-talk) anyway, so nothing is gained by sharing one clock.
+
+### Pins chosen, and why
+- **Mic (I2S0): `IO26` BCLK, `IO25` WS, `IO35` DOUT.** They're on the left header next to IO32/IO33. IO35 is **input-only**, which is fine, because the mic's data only flows *into* the ESP32.
+- **Amp (I2S1): `IO18` BCLK, `IO19` LRC, `IO21` DIN.** They're on the right header, with a **GND pin right between 21 and 19**, so all the amp's signal wires plus ground sit together.
+- **Avoided:**
+  - strapping pins IO0/2/5/12/15. If they're pulled the wrong way at power-up, the board may not boot.
+  - flash pins IO6–11.
+  - IO14, which outputs a signal during boot and would make the amp pop.
+
+Right header order (J3), starting from the antenna end, for finding the amp pins:
+```
+GND, 23, 22, TX, RX, 21, GND, 19, 18, 5, 17, 16, 4, 0, 2, 15, D1, D0, CLK
+                         ^^^  ^^^  ^^^  ^^              ^^  ^^
+                         DIN  GND  LRC  BCLK            DFPlayer (TX/RX)
+```
+Left header (J2) is shown in section 7 (`... 34, 35, 32, 33, 25, 26, ...`). IO35, IO25 and IO26 are all near IO32/IO33.
+
+### ICS-43434 mic (Adafruit 6049)
+
+> ⚠️ **3.3V ONLY.** Connect the mic's `3V` pin to the ESP32 **`3V3`** pin. **Never 5V.** 5V permanently kills the mic (its max is 3.6V). Check this wire twice before plugging in USB.
+
+The pins are labeled `3V`, `GND`, `BCLK`, `DOUT`, `LRCL` (may also be printed `LRCLK`; it's the WS pin), and `SEL`. Check the silkscreen on your board.
+
+| Mic pin | Goes to | Notes |
+|---|---|---|
+| 3V | ESP32 **3V3** | **Not 5V!** |
+| GND | blue − rail | |
+| BCLK | ESP32 **IO26** | |
+| LRCL (WS) | ESP32 **IO25** | |
+| DOUT | ESP32 **IO35** | mic → ESP32 |
+| SEL | **leave unconnected** | see below |
+
+- **SEL** picks which "side" the mic talks on. Low = left channel, high = right channel. It's **low by default** (Adafruit's guide), so leaving it unconnected gives **left**, which is what the firmware will read. If you want to be extra sure, connect SEL to the − rail. That does the same thing.
+- **Orientation:** the mic is **bottom-ported**. The tiny sound hole is on the **bottom of the board**, the side without the mic chip. On the breadboard that hole faces down into the breadboard, which is fine for testing (just talk near it). In the top piece, that hole must face the **user's mouth**, through the shell's speaking hole.
+
+### MAX98357A amp (Adafruit 3006) + top speaker
+
+| Amp pin | Goes to | Notes |
+|---|---|---|
+| Vin | ESP32 **5V** (recommended) or 3V3 | see "5V or 3V3?" below |
+| GND | ESP32 GND (the one between IO21 and IO19) or − rail | |
+| BCLK | ESP32 **IO18** | |
+| LRC | ESP32 **IO19** | |
+| DIN | ESP32 **IO21** | ESP32 → amp |
+| GAIN | **leave unconnected** | 9 dB, the default |
+| SD | **leave unconnected** | amp on, mono mix |
+| Speaker + / − (screw terminal) | the two tabs of the **SP-4018 top speaker** | **never to GND** |
+
+- **5V or 3V3 for Vin?** The amp accepts 2.5–5.5V. Higher voltage = louder. Into an 8Ω speaker, Adafruit lists about **1.4W at 5V** and about **0.6W at 3.3V**. Use **5V** (the same pin as the DFPlayer). The I2S wires still work at the ESP32's 3.3V logic level either way. If it's too loud or distorted, lower the volume in software. Don't run it at full power into the small top speaker for long.
+- **GAIN** sets the loudness boost. Unconnected = **9 dB** (the default, and the right starting point). Other options, for later: GAIN to GND = 12 dB, GAIN to Vin = 6 dB. Unplug and replug USB after changing it.
+- **SD** (shutdown/mode). The breakout already has a resistor on SD that keeps the amp **on** and playing a **mono mix of left + right**. Leave it unconnected. (Don't connect SD to GND. That shuts the amp off.) Later the firmware could use SD to mute the amp. Not needed now.
+- **Speaker wiring.** Screw the two speaker wires into the amp's `+` and `−` screw terminals. Polarity doesn't matter for a single speaker.
+
+> ⚠️ **Never connect the amp's speaker `−` to GND**, and never feed the speaker terminals into another amp. The MAX98357A drives *both* speaker wires (a "bridge" output), so speaker − is **not** ground. Tying it to ground can destroy the amp.
+
+### Sketch
+
+```
+MIC (I2S0)                               AMP (I2S1)
+ESP32 3V3  ---------> Mic 3V   (NOT 5V)  ESP32 5V   ---------> Amp Vin
+− rail     ---------- Mic GND            ESP32 GND  ---------- Amp GND
+ESP32 IO26 ---------> Mic BCLK           ESP32 IO18 ---------> Amp BCLK
+ESP32 IO25 ---------> Mic LRCL           ESP32 IO19 ---------> Amp LRC
+ESP32 IO35 <--------- Mic DOUT           ESP32 IO21 ---------> Amp DIN
+            (nothing) Mic SEL                       (nothing) Amp GAIN, Amp SD
+                                         Amp + ---- speaker tab
+                                         Amp − ---- speaker tab   (never GND)
+```
+
+### Later: the coiled cord
+In the finished snail, the mic's 5 wires (`3V`, `GND`, `BCLK`, `LRCL`, `DOUT`) and the 2 speaker wires go up the coiled cord to the top piece. The amp stays in the base. Pair each I2S signal with a GND wire, or twist BCLK with GND. The clock is the line most likely to pick up noise over 1–2 ft. Test the mic over the real cord before closing up the shell.
+
+### Notes for the firmware step (mic driver)
+- The ICS-43434 needs **64 BCLK ticks per WS frame**. That means 2 slots × 32 bits, so set the ESP-IDF I2S std config to **32-bit slots, stereo frame**. The mic's data is **24-bit, two's complement, MSB first** (standard Philips I2S). Read the **left** slot.
+- **Sample rate:** use **16 kHz** (BCLK = 64 × 16 kHz = 1.024 MHz). The supported ranges are about **6.25–18.75 kHz** (low-power mode) and **23–51.6 kHz** (high-performance mode). Don't pick a rate in the gap between 18.75 and 23 kHz. Below about 3.1 kHz the mic goes to sleep. 8 kHz is also valid if radio bandwidth gets tight.
+- The mic needs a short wake-up time after the clock starts. Throw away the first few tens of ms of samples.
+- The mic lets go of `DOUT` during the right slot (it "tristates"), so the right slot reads garbage. Ignore it.
+
+## 9. Not wired yet
+
+- ICS-43434 mic and MAX98357A amp: pins chosen (section 8), but headers need soldering, then wiring and testing
+- Top speaker (goes on the MAX98357A, section 8)
 - Power slide switch
