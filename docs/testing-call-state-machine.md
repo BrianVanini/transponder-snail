@@ -30,8 +30,9 @@ Then in VS Code, open `firmware/` and **Build, Flash and Monitor** each board. D
 
 ### Reading the logs
 - Every state change prints one line: `[call] OLD -> NEW (reason)`.
-- Every 5 s you'll also see `ping from B, RSSI -45 dBm` and `-> B: delivered`. These are range diagnostics, so ignore them here. To hide them, set `DEBUG_PINGS` to `0` in `main.c`.
-- `-> B: FAILED` means a packet didn't arrive. A few are fine, but lots of them means range or power problems.
+- Every 5 s you'll also see `ping from B, RSSI -45 dBm`. This is a range diagnostic, so ignore it here. To hide it, set `DEBUG_PINGS` to `0` in `main.c`.
+- Successful sends print nothing. While CONNECTED, each board quietly sends a keep-alive (`MSG_ALIVE`) every second, so there are no extra lines during a call.
+- `-> B: FAILED` means a packet didn't arrive. A few are fine, but lots of them means range or power problems. If B is unplugged during a call, A prints a `FAILED` line about once a second until it gives up (test 8).
 
 Start every test with **both tops DOWN** and both boards in IDLE. After a reboot, no `[call]` line has printed yet, which means IDLE.
 
@@ -112,6 +113,19 @@ Also check: pressing PTT with the top **down** prints `(lift the top first to ma
 
 With a third snail (add its row to `SNAILS[]`): while A and B are connected, C calls. A and B ignore the call, reply BUSY, and C prints `A is busy` / `B is busy`. C gives up after 30 s.
 
+### 8. Other snail loses power mid-call
+Both boards must run firmware with the keep-alive (`MSG_ALIVE`). If only one does, every call drops by itself after ~5 s with `connection lost`.
+
+1. Connect A and B (test 1).
+2. Unplug B's USB cable.
+
+| When | Snail A prints |
+|---|---|
+| right after unplugging | `-> B: FAILED` about once a second |
+| within ~5 s | `Lost connection to B`<br>`[call] CONNECTED -> IDLE (connection lost)` |
+
+Plug B back in: it reboots into IDLE, and A can call it again. The timings are `ALIVE_SEND_MS` (1 s) and `ALIVE_TIMEOUT_MS` (5 s) in `call.c`.
+
 ## 3. Troubleshooting
 
 - **Nothing happens when I press PTT:** check that the top is lifted. You should have seen `Hook: lifted`. On B, the jumper must be **out**.
@@ -122,4 +136,5 @@ With a third snail (add its row to `SNAILS[]`): while A and B are connected, C c
 - **No click on answer:** `mp3/0002.mp3` is missing. Look for `DFPlayer: got 0x40 (param 6)`.
 - **Call connects then drops right away:** the hook flickered (jumper half-out touching, or magnet still near the reed switch), so the board saw lifted → down and hung up. Look for `Hook: down` just before `CONNECTED -> IDLE (hung up)`. Pull the jumper fully out and keep the magnet away.
 - **`UNKNOWN SNAIL`:** this board's MAC isn't in `SNAILS[]` in `main.c`.
-- **Stuck in CONNECTED after the other board was unplugged:** expected for now (there's no keep-alive). Put the top down to hang up.
+- **Stuck in CONNECTED after the other board was unplugged:** the keep-alive should hang up within ~5 s (test 8). If it doesn't, this board is running old firmware. Re-flash it, and put the top down to hang up meanwhile.
+- **Every call drops after ~5 s with `connection lost`:** the other board runs old firmware that never sends `MSG_ALIVE`. Flash both boards with the current firmware.

@@ -83,12 +83,14 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
     xQueueSend(rx_queue, &ev, 0);  // drop if full rather than block the WiFi task
 }
 
+// Only failures are printed. Successful sends stay quiet, otherwise the keep-alive
+// (MSG_ALIVE every second while connected) would flood the log with "delivered" lines.
+// For range checks, look at the "ping from X, RSSI ..." lines on the receiving board.
 static void on_send(const esp_now_send_info_t *info, esp_now_send_status_t status)
 {
-    if (status == ESP_NOW_SEND_SUCCESS && !DEBUG_PINGS) return;
+    if (status == ESP_NOW_SEND_SUCCESS) return;
     int i = snail_index(info->des_addr);
-    printf("  -> %s: %s\n", i >= 0 ? SNAILS[i].name : "?",
-           status == ESP_NOW_SEND_SUCCESS ? "delivered" : "FAILED");
+    printf("  -> %s: FAILED\n", i >= 0 ? SNAILS[i].name : "?");
 }
 
 static void send_msg(int peer, msg_type_t type)

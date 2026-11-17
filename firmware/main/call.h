@@ -16,6 +16,7 @@ typedef enum {
     MSG_BUSY,         // reply to a RING while we're in another call
     MSG_TALK_START,   // PTT pressed while connected
     MSG_TALK_STOP,    // PTT released while connected
+    MSG_ALIVE,        // keep-alive, sent every second while connected (add new types at the end)
 } msg_type_t;
 
 typedef enum {

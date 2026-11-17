@@ -10,6 +10,9 @@
                                      // (only until the first "done" frame is seen; after that
                                      // the ring loops at its natural length)
 #define DONE_GUARD_MS        500     // ignore duplicate "done" frames right after a play
+#define ALIVE_SEND_MS        1000    // while connected, send MSG_ALIVE to the peer this often
+#define ALIVE_TIMEOUT_MS     5000    // hang up if nothing heard from the peer for this long
+                                     // (e.g. the other snail lost power mid-call)
 
 // Open design question, decided here: a RING arrives while our top is already lifted.
 //   1 = auto-answer right away (default).
@@ -28,6 +31,8 @@ static uint32_t state_ms;          // when we entered the current state
 static uint32_t ring_ms;           // CALLING: last RING sent; RINGING: last RING heard
 static uint32_t play_ms;           // last time the ring sound was (re)started
 static bool dfp_seen_done;         // DFPlayer has reported a finished track at least once
+static uint32_t alive_ms;          // CONNECTED: last MSG_ALIVE sent
+static uint32_t last_heard_ms;     // CONNECTED: last message of any kind from 'peer'
 
 // Print "[call] OLD -> NEW (note name)" and switch state.
 static void go(call_state_t s, const char *note, int who)
@@ -40,6 +45,11 @@ static void go(call_state_t s, const char *note, int who)
     state_ms = now_ms;
     talking = false;
     if (s == CALL_IDLE) peer = -1;
+    if (s == CALL_CONNECTED) {
+        // Every way into CONNECTED passes through here, so the keep-alive timers start fresh.
+        last_heard_ms = now_ms;
+        alive_ms = now_ms;
+    }
 }
 
 static void send_all_except(int skip, msg_type_t type)
@@ -154,6 +164,8 @@ static void on_ring(int from)
 void call_msg(int from, msg_type_t type)
 {
     if (from < 0 || from == self) return;
+    // Any message from our peer (ALIVE, TALK_*, a resent RING/ANSWER...) proves it's still there.
+    if (state == CALL_CONNECTED && from == peer) last_heard_ms = now_ms;
     switch (type) {
     case MSG_RING:
         on_ring(from);
@@ -186,6 +198,8 @@ void call_msg(int from, msg_type_t type)
     case MSG_TALK_STOP:
         if (state == CALL_CONNECTED && from == peer) printf("%s stopped\n", io->name(from));
         break;
+    case MSG_ALIVE:
+        break;   // nothing to do: last_heard_ms was already updated above
     default:
         break;
     }
@@ -215,6 +229,14 @@ void call_tick(int ms)
             go(CALL_IDLE, "caller gone", -1);
         } else if (!dfp_seen_done && now_ms - play_ms >= RING_REPLAY_MS) {
             ring_start();   // fallback for no DFPlayer (until the first "done" frame)
+        }
+    } else if (state == CALL_CONNECTED) {
+        if (now_ms - last_heard_ms >= ALIVE_TIMEOUT_MS) {
+            printf("Lost connection to %s\n", io->name(peer));
+            go(CALL_IDLE, "connection lost", -1);
+        } else if (now_ms - alive_ms >= ALIVE_SEND_MS) {
+            io->send(peer, MSG_ALIVE);
+            alive_ms = now_ms;
         }
     }
 }

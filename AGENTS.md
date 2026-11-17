@@ -25,6 +25,7 @@ Call flow (`firmware/main/call.c`, states IDLE / CALLING / RINGING / CONNECTED):
 - Lifting the top answers (click, MSG_ANSWER) → CONNECTED. The caller connects to the first answer and sends HANGUP to everyone else, so other ringers stop.
 - Busy snails reply MSG_BUSY. If two snails call each other at once, the lower `SNAILS[]` index answers.
 - In CONNECTED, PTT sends TALK_START / TALK_STOP (no audio yet). Setting the top down sends HANGUP → IDLE on both sides.
+- Keep-alive: while CONNECTED each snail sends MSG_ALIVE every 1 s; if nothing is heard from the peer for 5 s (e.g. it lost power), it hangs up → IDLE (`ALIVE_SEND_MS` / `ALIVE_TIMEOUT_MS` in `call.c`). Both snails must run firmware with this, or the call drops after 5 s.
 
 ## Parts (DigiKey, ordered and arrived)
 
@@ -50,7 +51,7 @@ Also on hand: RexQualis electronics kit (breadboard, jumpers, resistors, power m
 - DFPlayer: FAT16/FAT32 card, files named like `0001.mp3`, 1kΩ resistor between ESP32 TX and DFPlayer RX. Drives the base speaker directly (built-in amp). Tracks: `RING_TRACK` = `mp3/0001.mp3`, `CLICK_TRACK` = `mp3/0002.mp3`. `0x40 param 6` = track not found; macOS hidden `._` files on the card can cause it.
 - MAX98357A output goes straight to the speaker — never to another amp or to ground.
 - Reed switch: read with internal pull-up. Rare-earth magnets may trigger from too far away. A MagSafe charger was only a weak test magnet; measure reed trigger distance with a ~10 mm neodymium disc before fixing shell wall thickness.
-- **Range risk:** a concrete wall separates the two sides of the house. Test ESP-NOW through it early. Fixes in order: raise TX power → U.FL-antenna ESP32 boards → route over home WiFi instead. In testing, ESP-NOW worked through several interior walls; still confirm the concrete wall specifically.
+- **Range (solved):** ESP-NOW tested fine through the concrete wall between the two sides of the house and several interior walls, so range is no longer a risk. If it ever gets worse: raise TX power → U.FL-antenna ESP32 boards → route over home WiFi.
 
 ## Repo layout
 
